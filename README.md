@@ -1,33 +1,19 @@
-# Mijn Notities — iCloud op Android
+# Mijn Notities — PHP iCloud Notes prototype
 
-Mobiele **read-only iCloud Notes** webapp op `https://mikesmid.nl/wallet/`.
-Een eigen backend gebruikt de PyiCloud-client voor Apple-aanmelding, 2FA, mappen en notities. De broncode staat in `connector/icloud_gateway.py`. De Notes API van Apple is privé/ongedocumenteerd: wijzigingen aan Apple kunnen de connector breken.
+## Belangrijke status
+Dit project is een **onvoltooide experimentele PHP-port**. Het is geen werkende iCloud Notes-app. De PHP-backend kan een beveiligde sessie beheren, maar Apple kan de legacy JSON-login weigeren (moderne accounts gebruiken SRP-6a); de CloudKit Notes-recordparser en het omzetten van de versleutelde notities naar tekst zijn nog niet geïmplementeerd. De app mag geen succesvol inloggen of opgehaalde notities suggereren zonder een echte test.
 
-## Status
+## PHP
+Broncode: `public/api/index.php` (PHP 8.2+, cURL, sessions), `public/api/.htaccess`.
+Vite kopieert `public/` naar `dist/`. Bestaande `.github/workflows/deploy-ftp.yml` blijft behouden.
+Configureer op de PHP-server de geheime omgevingsvariabele `NOTES_ACCESS_KEY` (minstens 24 willekeurige tekens). **Nooit** in GitHub-repository, HTML, JavaScript of FTP-artifacts plaatsen. De server moet HTTPS ondersteunen en PHP-sessies kunnen opslaan.
 
-De app bevat nu een werkelijke backendimplementatie en frontend-API; **de Python-gateway is NIET door GitHub FTP-deploy geïnstalleerd**. Er is alleen een statische FTP-webhosting gecontroleerd, geen Python-proces op die hosting bevestigd. Zonder gateway werkt aanmelden bewust niet. Er is geen Apple-account live getest. De app is dus niet end-to-end bevestigd.
+Endpoints: `GET /wallet/api/health` (geen authenticatie), `POST /wallet/api/unlock` (toegangscode), `GET /wallet/api/status`, `POST /wallet/api/login`, `POST /wallet/api/verify`, `POST /wallet/api/logout`, `GET /wallet/api/notes`, `GET /wallet/api/folders`.
 
-## Backend installeren op eigen Windows-server, Linux-server of Python-hosting
+## Beperkingen
+- De Apple-login is compatibiliteitscode die een oudere onofficiële methode probeert; nieuwere SRP-login moet nog worden geporteerd en getest.
+- CloudKit Notes synchronisatie, notitietekstdecode, attachments en versleutelde notities ontbreken.
+- Zonder live Apple-accounttest en deploymentcontrole kan dit niet als werkend worden beschouwd.
+- De oude Python-code in `connector/` is een los experiment en niet nodig voor PHP-deploy; de productieroute is `public/api/`.
 
-1. Installeer Python 3.11+.
-2. `python -m pip install -r connector/requirements.txt`
-3. Maak drie omgevingsvariabelen op de **server**, nooit in Git:
-   - `NOTES_ACCESS_KEY`: geheime toegangscode van minimaal 24 tekens.
-   - `NOTES_SESSION_KEY`: willekeurig geheim van minimaal 32 tekens.
-   - `NOTES_PUBLIC_ORIGIN=https://mikesmid.nl`
-4. Start `python connector/icloud_gateway.py`. Hij luistert uitsluitend op `127.0.0.1:7866`. Voor productie liever met waitress: `waitress-serve --listen=127.0.0.1:7866 connector.icloud_gateway:app`.
-5. Stel een **HTTPS reverse proxy** in waardoor uitsluitend `https://mikesmid.nl/wallet/api/*` naar de backend `http://127.0.0.1:7866/api/*` gaat. De route moet op dezelfde publieke origin draaien. Voor een FTP-hosting op een ándere server is dit **niet automatisch** mogelijk: pas DNS/hosting of een gecontroleerde tunnel/reverse proxy aan.
-6. Stel GitHub Actions FTP-secrets in en laat `FTP_SERVER_DIR` naar de map van `/wallet/` wijzen. Het bestaande deployscript is behouden; de frontend bouwt met Vite.
-7. Test `/wallet/api/health` (JSON), ontgrendel met de toegangscode en meld je aan bij Apple. PyiCloud en Apple Notes kunnen per account verschillen.
-
-## Beveiliging
-
-- Alles via HTTPS. Geen wachtwoorden of tokens in GitHub of in de frontend.
-- De API heeft een aparte eigenaarscode, rate limiting, secure HttpOnly sessiecookie en controleert de Origin op POST-verzoeken.
-- Gebruik een niet-gedeelde privéserver. PyiCloud kan sessiecookies op schijf opslaan; behandel die als geheim.
-- De code maakt geen notities aan en wijzigt ze niet.
-- Zet geen willekeurige publieke Python-backend open. Bescherm ook `/wallet/` tegen onbevoegden.
-
-## Referenties
-- https://pyicloud.readthedocs.io/en/2026.10.0/guides/authentication/
-- https://pyicloud.readthedocs.io/en/2026.10.0/services/notes/
+PyiCloud API-documentatie: https://pyicloud.readthedocs.io/en/2026.10.0/api/services/notes/
