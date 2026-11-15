@@ -38,12 +38,21 @@ jobs:
       - name: Typecontrole
         run: npm run typecheck
 
-      - name: Tests (BIP39/BIP32/BIP84-testvectoren, kluis, scannen, versturen, RBF)
+      - name: Tests
         run: npm test
+
+      - name: PHP installeren en syntaxis controleren
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: curl
+          tools: none
+
+      - name: PHP API controleren
+        run: php -l public/api/index.php
 
       - name: Bouwen
         env:
-          WALLET_CONNECT_SRC: ${{ vars.WALLET_CONNECT_SRC }}
         run: npx vite build
 
       - name: FTP-client installeren
