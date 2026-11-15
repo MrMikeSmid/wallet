@@ -1,0 +1,9 @@
+Options -Indexes
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^(health|unlock|status|login|verify|logout|folders|notes(?:/.*)?)$ index.php [QSA,L]
+</IfModule>
+<FilesMatch "^\.">
+Require all denied
+</FilesMatch>
