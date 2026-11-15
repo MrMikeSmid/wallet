@@ -68,22 +68,49 @@ export function endpointOrigin(url: string): string | null {
   }
 }
 
+export interface RetryOptions {
+  /** Aantal extra pogingen na een 429 of een netwerkfout (alleen bij GET). */
+  retries: number;
+  /** Eerste wachttijd in ms; verdubbelt per poging. */
+  baseMs: number;
+  sleep: (ms: number) => Promise<void>;
+}
+
+export const DEFAULT_RETRY: RetryOptions = {
+  retries: 5,
+  baseMs: 2_000,
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+};
+
+const RATE_LIMITED =
+  'De server beperkt het aantal verzoeken. Wacht een minuut en probeer het opnieuw, of stel een eigen server in.';
+
+/** Leesbare foutmelding uit een foutantwoord (geen HTML-pagina tonen). */
+function errorText(status: number, body: string): string {
+  if (status === 429) return RATE_LIMITED;
+  const t = body.trim();
+  if (!t || t.startsWith('<') || t.length > 300) return `De server gaf een fout (${status}).`;
+  return t;
+}
+
 export class Esplora {
   readonly base: string;
   private readonly fetchFn: FetchFn;
   private readonly timeoutMs: number;
+  private readonly retry: RetryOptions;
 
-  constructor(base: string, fetchFn: FetchFn = (i, init) => fetch(i, init), timeoutMs = 20_000) {
+  constructor(base: string, fetchFn: FetchFn = (i, init) => fetch(i, init), timeoutMs = 20_000, retry: RetryOptions = DEFAULT_RETRY) {
     this.base = base.replace(/\/+$/, '');
     this.fetchFn = fetchFn;
     this.timeoutMs = timeoutMs;
+    this.retry = retry;
   }
 
-  private async request(path: string, init: RequestInit = {}): Promise<Response> {
+  private async once(path: string, init: RequestInit): Promise<Response> {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), this.timeoutMs);
     try {
-      const res = await this.fetchFn(this.base + path, {
+      return await this.fetchFn(this.base + path, {
         ...init,
         signal: ctrl.signal,
         credentials: 'omit',
@@ -91,16 +118,40 @@ export class Esplora {
         referrerPolicy: 'no-referrer',
         mode: 'cors',
       });
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new EsploraError(text.trim() || `Server gaf ${res.status}`);
-      }
-      return res;
-    } catch (e) {
-      if (e instanceof EsploraError) throw e;
-      throw new EsploraError('De server is niet bereikbaar. Controleer je verbinding of het server-adres.');
     } finally {
       clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Eén verzoek, met nieuwe pogingen bij een 429 of een netwerkfout. Openbare
+   * servers zoals mempool.space sturen bij te veel verzoeken een 429 zonder
+   * CORS-header; de browser meldt dat als netwerkfout. Daarom wachten we dan
+   * oplopend (2, 4, 8 … s) en proberen we het opnieuw.
+   */
+  private async request(path: string, init: RequestInit = {}): Promise<Response> {
+    const canRetry = (init.method ?? 'GET') === 'GET';
+    let rateLimited = false;
+    for (let attempt = 0; ; attempt++) {
+      let res: Response | null = null;
+      try {
+        res = await this.once(path, init);
+      } catch {
+        res = null;
+      }
+      if (res?.ok) return res;
+      const retryable = res === null || res.status === 429 || res.status >= 500;
+      if (res?.status === 429) rateLimited = true;
+      if (canRetry && retryable && attempt < this.retry.retries) {
+        await this.retry.sleep(this.retry.baseMs * 2 ** attempt);
+        continue;
+      }
+      if (res) throw new EsploraError(errorText(res.status, await res.text().catch(() => '')));
+      throw new EsploraError(
+        rateLimited
+          ? RATE_LIMITED
+          : 'De server is niet bereikbaar of beperkt het aantal verzoeken. Controleer je verbinding, wacht een minuut en probeer het opnieuw.',
+      );
     }
   }
 

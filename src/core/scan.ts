@@ -53,7 +53,7 @@ export interface ScanOptions {
   onProgress?: (done: number) => void;
 }
 
-export function randomPause(minMs = 80, maxMs = 350): () => Promise<void> {
+export function randomPause(minMs = 150, maxMs = 450): () => Promise<void> {
   return () => {
     const r = globalThis.crypto.getRandomValues(new Uint32Array(1))[0]! / 2 ** 32;
     return new Promise((res) => setTimeout(res, minMs + r * (maxMs - minMs)));

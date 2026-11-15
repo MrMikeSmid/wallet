@@ -6,6 +6,12 @@ import type { Chain, DerivedAddress } from '../core/wallet.ts';
 import * as session from './session.ts';
 
 let running: Promise<ScanResult> | null = null;
+let progress = 0;
+
+/** Aantal verzoeken dat de lopende scan al heeft gedaan. */
+export function syncProgress(): number {
+  return progress;
+}
 const listeners = new Set<(r: ScanResult | null, busy: boolean) => void>();
 
 export function onSync(fn: (r: ScanResult | null, busy: boolean) => void): () => void {
@@ -34,7 +40,14 @@ export async function sync(): Promise<ScanResult> {
     emit(await cached(), true);
     const { net } = await session.settings();
     const book = await session.addressBook();
-    const result = await scanWallet(book, await api());
+    progress = 0;
+    const current = await cached();
+    const result = await scanWallet(book, await api(), {
+      onProgress: (n) => {
+        progress = n;
+        emit(current, true);
+      },
+    });
     if (session.isUnlocked()) {
       await session.saveState((s) => {
         s.cache[net] = result;

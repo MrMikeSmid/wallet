@@ -91,6 +91,7 @@ Een nieuwe gebruiker kiest bij de eerste start tussen **Nieuwe wallet** en **Wal
 ### Privacy
 
 - De app maakt alleen verzoeken naar de ingestelde Esplora-server.
+- Bij een 429 of netwerkfout (openbare servers beperken het aantal verzoeken) wacht de app oplopend (2, 4, 8 … s) en probeert het opnieuw.
 - Er zijn geen analytics, geen externe fonts, geen CDN en geen pushdiensten.
 - Bij het scannen gaan adressen één voor één naar de server, in willekeurige volgorde en met een willekeurige pauze (gap limit 20, receive- en change-keten).
 - Wisselgeld gaat naar een apart change-adres (BIP84 interne keten).

@@ -1,7 +1,7 @@
 // Scherm 5: Home (saldo en transacties) en het detail van een transactie.
 
 import * as session from '../../app/session.ts';
-import { cached, isSyncing, locateOwn, onSync, sync, api } from '../../app/sync.ts';
+import { api, cached, isSyncing, locateOwn, onSync, sync, syncProgress } from '../../app/sync.ts';
 import { formatBtc, formatSats, formatSigned } from '../../core/format.ts';
 import type { ScanResult, TxSummary } from '../../core/scan.ts';
 import { TxError, buildBump, feeLevels, signDraft } from '../../core/tx.ts';
@@ -53,7 +53,7 @@ route('/home', {
                   <div class="stat-sub">${unit === 'btc' ? `${formatSats(BigInt(r.confirmed))} sats` : `${formatBtc(BigInt(r.confirmed))} BTC`}</div>
                   ${r.unconfirmed !== 0 ? html`<div class="stat-sub">Onbevestigd: <b>${formatSigned(BigInt(r.unconfirmed), unit)}</b> ${unit === 'btc' ? 'BTC' : 'sats'}</div>` : ''}`
               : html`<div class="stat-value">—</div><div class="stat-sub">${busy ? 'Saldo ophalen…' : 'Nog niet opgehaald.'}</div>`}
-            ${busy ? html`<div class="progress" aria-label="Bezig met bijwerken"><i></i></div>` : html`<div class="hint">${r ? `Bijgewerkt ${relTime(r.scannedAt)}` : ''}</div>`}
+            ${busy ? html`<div class="progress" aria-label="Bezig met bijwerken"><i></i></div><div class="hint">Adressen controleren${syncProgress() ? ` (${syncProgress()})` : ''}…</div>` : html`<div class="hint">${r ? `Bijgewerkt ${relTime(r.scannedAt)}` : ''}</div>`}
             <div class="balance-actions">
               <a class="btn btn-primary" href="#/ontvangen">${icon('receive')}Ontvangen</a>
               <a class="btn btn-secondary" href="#/versturen">${icon('send')}Versturen</a>
