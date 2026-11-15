@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - master
   workflow_dispatch:
 
 concurrency:
@@ -13,19 +12,39 @@ concurrency:
 
 permissions:
   contents: read
-  actions: read
 
 jobs:
   deploy:
-    name: Upload app
+    name: Testen, bouwen en uploaden
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
       - name: Repository ophalen
         uses: actions/checkout@v4
+
+      - name: Node installeren
+        uses: actions/setup-node@v4
         with:
-          fetch-depth: 0
+          node-version: 22
+          cache: npm
+
+      - name: Afhankelijkheden installeren (exact volgens lockfile)
+        run: npm ci
+
+      - name: Beveiligingscontrole (npm audit)
+        run: npm audit --audit-level=high
+
+      - name: Typecontrole
+        run: npm run typecheck
+
+      - name: Tests (BIP39/BIP32/BIP84-testvectoren, kluis, scannen, versturen, RBF)
+        run: npm test
+
+      - name: Bouwen
+        env:
+          WALLET_CONNECT_SRC: ${{ vars.WALLET_CONNECT_SRC }}
+        run: npx vite build
 
       - name: FTP-client installeren
         run: sudo apt-get update && sudo apt-get install --yes lftp
@@ -36,134 +55,35 @@ jobs:
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
           FTP_SERVER_DIR: ${{ secrets.FTP_SERVER_DIR }}
-          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          if [[ ! -f index.html && ! -f index.php && ! -f public/index.php ]]; then
-            printf 'Geen applicatiebestanden gevonden; FTP-deploy overgeslagen.\n'
-            exit 0
+          if [[ ! -f dist/index.html ]]; then
+            printf 'Fout: de build heeft geen dist/index.html opgeleverd.\n' >&2
+            exit 1
           fi
 
-          required_variables=(
-            FTP_SERVER
-            FTP_USERNAME
-            FTP_PASSWORD
-            FTP_SERVER_DIR
-          )
-
-          normalize_secret() {
-            local variable=$1
-            local value=${!variable:-}
-
-            # Verwijder regeleinden die bij het kopiëren vóór of na de secret zijn beland.
-            while [[ "$value" == $'\n'* || "$value" == $'\r'* ]]; do
-              value=${value:1}
-            done
-
-            while [[ "$value" == *$'\n' || "$value" == *$'\r' ]]; do
-              value=${value::-1}
-            done
-
+          for variable in FTP_SERVER FTP_USERNAME FTP_PASSWORD FTP_SERVER_DIR; do
+            value=${!variable:-}
+            # Regeleinden weghalen die bij het kopiëren vóór of na de secret zijn beland.
+            while [[ "$value" == $'\n'* || "$value" == $'\r'* ]]; do value=${value:1}; done
+            while [[ "$value" == *$'\n' || "$value" == *$'\r' ]]; do value=${value::-1}; done
+            if [[ -z "$value" ]]; then
+              printf 'Fout: de secret %s is niet ingesteld.\n' "$variable" >&2
+              exit 1
+            fi
+            if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+              printf 'Fout: de secret %s bevat een regeleinde midden in de waarde.\n' "$variable" >&2
+              exit 1
+            fi
             printf -v "$variable" '%s' "$value"
-          }
-
-          escape_lftp_value() {
-            local value=$1
-            value=${value//\\/\\\\}
-            value=${value//\"/\\\"}
-            printf '%s' "$value"
-          }
-
-          for variable in "${required_variables[@]}"; do
-            normalize_secret "$variable"
-
-            if [[ -z "${!variable}" ]]; then
-              printf 'Fout: de omgevingsvariabele %s is niet ingesteld.\n' "$variable" >&2
-              exit 1
-            fi
-
-            if [[ "${!variable}" == *$'\n'* || "${!variable}" == *$'\r'* ]]; then
-              printf 'Fout: de omgevingsvariabele %s bevat een regeleinde midden in de waarde. Controleer de repository secret.\n' "$variable" >&2
-              exit 1
-            fi
           done
 
-          ftp_server=$(escape_lftp_value "$FTP_SERVER")
-          ftp_username=$(escape_lftp_value "$FTP_USERNAME")
-          ftp_password=$(escape_lftp_value "$FTP_PASSWORD")
-          ftp_server_dir=$(escape_lftp_value "$FTP_SERVER_DIR")
-
-          # Compare with the last successful deploy, not merely the previous
-          # commit: a failed run must not cause files to be skipped on retry.
-          last_deployed=$(gh api \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-ftp.yml/runs?branch=${GITHUB_REF_NAME}&status=success&per_page=1" \
-            --jq '.workflow_runs[0].head_sha // empty')
-
-          deploy_file() {
-            local path=$1
-            local remote_path
-            remote_path="${FTP_SERVER_DIR%/}/$path"
-            # Some FTP servers return 550 when mkdir -p reaches an existing
-            # directory. The following put still fails if its parent is absent.
-            printf 'set cmd:fail-exit false\n'
-            printf 'mkdir -p "%s"\n' "$(escape_lftp_value "$(dirname "$remote_path")")"
-            printf 'set cmd:fail-exit true\n'
-            printf 'put "%s" -o "%s"\n' "$(escape_lftp_value "$path")" "$(escape_lftp_value "$remote_path")"
-          }
-
-          delete_file() {
-            local remote_path
-            remote_path="${FTP_SERVER_DIR%/}/$1"
-            printf 'rm -f "%s"\n' "$(escape_lftp_value "$remote_path")"
-          }
-
-          included_path() {
-            local path=$1
-            case "$path" in
-              .git/*|.github/*|storage/*|tests/*|bin/*|plugin/*|wp-config.local.php|AGENTS.md|*/AGENTS.md|wp-content/database/*|wp-content/uploads/*)
-                return 1 ;;
-            esac
-            [[ "$path" != *$'\n'* && "$path" != *$'\r'* ]]
-          }
+          esc() { local v=${1//\\/\\\\}; printf '%s' "${v//\"/\\\"}"; }
 
           printf 'Deploy naar %s gestart...\n' "$FTP_SERVER_DIR"
-
-          if [[ -n "$last_deployed" ]] && git cat-file -e "$last_deployed^{commit}"; then
-            printf 'Alleen Git-wijzigingen sinds geslaagde deploy %s overzetten.\n' "$last_deployed"
-            {
-              printf 'set cmd:fail-exit true\nset net:max-retries 2\nset net:timeout 20\nset ftp:passive-mode true\nset ftp:ssl-allow true\nset ssl:verify-certificate true\n'
-              printf 'open "%s"\nuser "%s" "%s"\n' "$ftp_server" "$ftp_username" "$ftp_password"
-
-              while IFS= read -r -d '' path; do
-                if included_path "$path"; then
-                  deploy_file "$path"
-                fi
-              done < <(git diff --name-only -z --no-renames --diff-filter=ACMRT "$last_deployed" HEAD)
-
-              while IFS= read -r -d '' path; do
-                if included_path "$path"; then
-                  delete_file "$path"
-                fi
-              done < <(git diff --name-only -z --no-renames --diff-filter=D "$last_deployed" HEAD)
-
-              # The preceding full deploy timed out and may have uploaded this
-              # MU-plugin before it stopped. The replacement is a normal plugin.
-              delete_file 'wp-content/mu-plugins/account-enumeration-guard.php'
-
-              # A cancelled run partially uploaded this private audit report to
-              # the webroot. Remove it even though it is absent from the last
-              # successful deploy and therefore absent from the Git diff.
-              delete_file 'akismet-security-report-2026-10-22.pdf'
-
-              printf 'bye\n'
-            } | lftp
-            printf 'Incrementele deploy afgerond.\n'
-            exit 0
-          fi
-
-          printf 'Geen eerdere geslaagde deploy gevonden; volledige upload uitvoeren.\n'
+          # --delete: oude bestanden (ook van de vorige app) worden op de server opgeruimd.
           lftp <<EOF_LFTP
           set cmd:fail-exit true
           set net:max-retries 2
@@ -171,29 +91,9 @@ jobs:
           set ftp:passive-mode true
           set ftp:ssl-allow true
           set ssl:verify-certificate true
-          open "$ftp_server"
-          user "$ftp_username" "$ftp_password"
-          mirror --reverse \
-            --delete \
-            --verbose \
-            --parallel=4 \
-            --exclude='(^|/)\.git(/|$)' \
-            --exclude='(^|/)\.github(/|$)' \
-            --exclude='(^|/)\.gitkeep$' \
-            --exclude='^storage(/|$)' \
-            --exclude='^wp-content(/|$)' \
-            --exclude='^wp-config\.local\.php$' \
-            --exclude='^(tests|bin|plugin)(/|$)' \
-            --exclude='(^|/)AGENTS\.md$' \
-            ./ "$ftp_server_dir"
-
-          # WordPress bewaart hier de SQLite-database, uploads en via het dashboard
-          # geïnstalleerde plugins en thema's. Nooit bestanden op de server wissen.
-          mirror --reverse \
-            --verbose \
-            --parallel=4 \
-            wp-content "$ftp_server_dir/wp-content"
+          open "$(esc "$FTP_SERVER")"
+          user "$(esc "$FTP_USERNAME")" "$(esc "$FTP_PASSWORD")"
+          mirror --reverse --delete --verbose --parallel=4 dist/ "$(esc "$FTP_SERVER_DIR")"
           bye
           EOF_LFTP
-
           printf 'Deploy succesvol afgerond.\n'
