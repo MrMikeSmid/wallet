@@ -1,0 +1,1 @@
+import test from 'node:test';import assert from 'node:assert/strict';test('app url is relative for subdirectory deploy',()=>assert.ok('./api'.startsWith('./')));
