@@ -1,19 +1,28 @@
-# Mijn Notities — PHP iCloud Notes prototype
+# Wallet
 
-## Belangrijke status
-Dit project is een **onvoltooide experimentele PHP-port**. Het is geen werkende iCloud Notes-app. De PHP-backend kan een beveiligde sessie beheren, maar Apple kan de legacy JSON-login weigeren (moderne accounts gebruiken SRP-6a); de CloudKit Notes-recordparser en het omzetten van de versleutelde notities naar tekst zijn nog niet geïmplementeerd. De app mag geen succesvol inloggen of opgehaalde notities suggereren zonder een echte test.
+Zelfbeheerde Bitcoin-wallet die volledig in de browser draait. Er is geen backend, geen account en geen opslag van gegevens buiten het apparaat.
 
-## PHP
-Broncode: `public/api/index.php` (PHP 8.2+, cURL, sessions), `public/api/.htaccess`.
-Vite kopieert `public/` naar `dist/`. Bestaande `.github/workflows/deploy-ftp.yml` blijft behouden.
-Configureer op de PHP-server de geheime omgevingsvariabele `NOTES_ACCESS_KEY` (minstens 24 willekeurige tekens). **Nooit** in GitHub-repository, HTML, JavaScript of FTP-artifacts plaatsen. De server moet HTTPS ondersteunen en PHP-sessies kunnen opslaan.
+## Functies
+- Nieuwe wallet: herstelzin van 12 of 24 woorden (BIP39), controle van drie woorden, optionele extra wachtwoordzin.
+- Herstellen met een bestaande herstelzin.
+- Native SegWit-adressen (BIP84, `bc1q…`), onbeperkt nieuwe ontvangstadressen (tot 20 ongebruikt vooruit).
+- Ontvangen met QR-code en optioneel bedrag (BIP21).
+- Versturen met kostenkeuze, alles versturen, QR scannen en RBF aan.
+- Per adres de publieke en privésleutel (WIF) tonen, herstelzin tonen, zpub voor alleen-kijken.
+- Mainnet of testnet4.
 
-Endpoints: `GET /wallet/api/health` (geen authenticatie), `POST /wallet/api/unlock` (toegangscode), `GET /wallet/api/status`, `POST /wallet/api/login`, `POST /wallet/api/verify`, `POST /wallet/api/logout`, `GET /wallet/api/notes`, `GET /wallet/api/folders`.
+## Beveiliging en privacy
+- Sleutels worden alleen in de browser gemaakt (`crypto.getRandomValues`) en verlaten het apparaat nooit.
+- Op het apparaat staat alleen de kluis, versleuteld met PBKDF2-SHA256 (600.000 rondes) en AES-256-GCM, plus instellingen. Saldo, adressen en geschiedenis staan alleen in het geheugen.
+- Automatisch vergrendelen (instelbaar) en een oplopende wachttijd na verkeerde wachtwoorden.
+- Saldo en versturen gaan via een Esplora-server (standaard mempool.space). Die ziet je adressen en IP-adres, maar nooit je sleutels. Voor de meeste privacy stel je in Instellingen je eigen node in.
+- Strenge CSP en beveiligingsheaders (`public/.htaccess`).
 
-## Beperkingen
-- De Apple-login is compatibiliteitscode die een oudere onofficiële methode probeert; nieuwere SRP-login moet nog worden geporteerd en getest.
-- CloudKit Notes synchronisatie, notitietekstdecode, attachments en versleutelde notities ontbreken.
-- Zonder live Apple-accounttest en deploymentcontrole kan dit niet als werkend worden beschouwd.
-- De oude Python-code in `connector/` is een los experiment en niet nodig voor PHP-deploy; de productieroute is `public/api/`.
-
-PyiCloud API-documentatie: https://pyicloud.readthedocs.io/en/2026.10.0/api/services/notes/
+## Ontwikkelen
+```
+npm ci
+npm test        # BIP39/BIP32/BIP84-testvectoren, kluis, transacties
+npm run dev
+npm run build   # naar dist/
+```
+Bij een push naar `main` test, bouwt en uploadt `.github/workflows/deploy-ftp.yml` de inhoud van `dist/` naar de map uit de secret `FTP_SERVER_DIR` (`/wallet`).
