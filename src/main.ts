@@ -332,7 +332,13 @@ const NAV: { key: Tab; label: string; icon: string }[] = [
 const TITLES: Record<Tab, string> = { home: 'Overzicht', receive: 'Ontvangen', send: 'Versturen', addresses: 'Adressen', settings: 'Instellingen' };
 
 function go(k: Tab) { tab = k; closeDrawer(); render(); }
-function closeDrawer() { document.body.classList.remove('lade-open'); }
+function setDrawer(open: boolean) {
+  document.body.classList.toggle('lade-open', open);
+  document.getElementById('menu-btn')?.setAttribute('aria-expanded', String(open));
+  if (open) document.querySelector<HTMLElement>('#drawer .nav-link[aria-current="page"]')?.focus();
+}
+function closeDrawer() { setDrawer(false); }
+addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.body.classList.contains('lade-open')) { closeDrawer(); document.getElementById('menu-btn')?.focus(); } });
 
 function brand() {
   return h('div', { className: 'brand' },
@@ -376,7 +382,7 @@ function render() {
           brand(),
           h('div', { className: 'topbar-actions' },
             h('button', { className: 'icon-btn', 'aria-label': 'Vergrendelen', onclick: lock }, icon('lock')),
-            h('button', { className: 'icon-btn', 'aria-label': 'Menu openen', onclick: () => document.body.classList.add('lade-open') }, icon('menu')))),
+            h('button', { id: 'menu-btn', className: 'icon-btn', 'aria-label': 'Menu openen', 'aria-controls': 'drawer', 'aria-expanded': 'false', onclick: () => setDrawer(true) }, icon('menu')))),
         h('main', { id: 'main' }, h('h1', { className: 'page-title' }, TITLES[tab]), body))),
     h('nav', { className: 'bottombar', 'aria-label': 'Snelmenu' },
       ...NAV.map((n) => h('button', { className: 'bottom-link', 'aria-current': tab === n.key ? 'page' : null, onclick: () => go(n.key) },
