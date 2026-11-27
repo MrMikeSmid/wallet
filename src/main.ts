@@ -1,7 +1,8 @@
 import './style.css';
 import encodeQR from '@paulmillr/qr';
 import { isAddress, makeUri, parseUri } from './core/bip21.ts';
-import { DEFAULT_SERVER, Esplora } from './core/esplora.ts';
+import { DEFAULT_SERVER, Esplora, serversFor } from './core/esplora.ts';
+import { icon } from './icons.ts';
 import { startScan } from './core/scanner.ts';
 import { buildTx, type Draft } from './core/send.ts';
 import { defaultMeta, loadMeta, loadVault, lockoutMs, saveMeta, saveVault, wipe, type Meta } from './core/store.ts';
@@ -12,6 +13,10 @@ import { Account, isValidMnemonic, newMnemonic, normalizeMnemonic, words, type N
 
 // ---------- kleine DOM-hulp ----------
 type Child = Node | string | null | undefined | false;
+const store = {
+  get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } },
+  set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* geen opslag */ } },
+};
 function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...kids: Child[]): HTMLElementTagNameMap[K] {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -26,6 +31,7 @@ function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, 
 const app = document.getElementById('app')!;
 function screen(...kids: Child[]) {
   stopCamera();
+  if (!acc) document.body.classList.remove('met-onderbalk', 'lade-open');
   app.replaceChildren(...kids.filter(Boolean) as Node[]);
   window.scrollTo(0, 0);
 }
@@ -61,7 +67,13 @@ let tab: 'home' | 'receive' | 'send' | 'addresses' | 'settings' = 'home';
 let lockTimer = 0;
 let stopCamera: () => void = () => {};
 
-function api() { return new Esplora(meta.server); }
+let apiCache: Esplora | null = null;
+let apiKey = '';
+function api() {
+  const key = meta.net + '|' + meta.server;
+  if (!apiCache || apiKey !== key) { apiCache = new Esplora(serversFor(meta.net, meta.server)); apiKey = key; }
+  return apiCache;
+}
 function setMeta(p: Partial<Meta>) { meta = { ...meta, ...p }; saveMeta(meta); }
 
 function lock() {
@@ -309,28 +321,76 @@ function receiveIndex(): number {
   return Math.max(next, meta.issued - 1, 0);
 }
 
+type Tab = 'home' | 'receive' | 'send' | 'addresses' | 'settings';
+const NAV: { key: Tab; label: string; icon: string }[] = [
+  { key: 'home', label: 'Overzicht', icon: 'home' },
+  { key: 'receive', label: 'Ontvangen', icon: 'inbox' },
+  { key: 'send', label: 'Versturen', icon: 'send' },
+  { key: 'addresses', label: 'Adressen', icon: 'list' },
+  { key: 'settings', label: 'Instellingen', icon: 'settings' },
+];
+const TITLES: Record<Tab, string> = { home: 'Overzicht', receive: 'Ontvangen', send: 'Versturen', addresses: 'Adressen', settings: 'Instellingen' };
+
+function go(k: Tab) { tab = k; closeDrawer(); render(); }
+function closeDrawer() { document.body.classList.remove('lade-open'); }
+
+function brand() {
+  return h('div', { className: 'brand' },
+    h('span', { className: 'brand-mark', 'aria-hidden': 'true' }, '₿'),
+    h('span', { className: 'brand-text' }, h('strong', {}, 'Wallet'), h('small', {}, meta.net === 'main' ? 'Bitcoin' : 'Testnet4')));
+}
+
+function navLink(n: (typeof NAV)[number]) {
+  return h('button', { className: 'nav-link', 'aria-current': tab === n.key ? 'page' : null, title: n.label, onclick: () => go(n.key) },
+    icon(n.icon), h('span', { className: 'nav-label' }, n.label));
+}
+
 function render() {
   if (!acc) return;
-  const tabs = [
-    ['home', 'Overzicht'], ['receive', 'Ontvangen'], ['send', 'Versturen'], ['addresses', 'Adressen'], ['settings', 'Instellingen'],
-  ] as const;
   const body = tab === 'home' ? homeView() : tab === 'receive' ? receiveView() : tab === 'send' ? sendView()
     : tab === 'addresses' ? addressesView() : settingsView();
+  if (store.get('sidebar') === 'in') document.documentElement.classList.add('collapsed');
+  document.body.classList.add('met-onderbalk');
+  const side = h('aside', { id: 'drawer', className: 'sidebar', 'aria-label': 'Menu' },
+    h('div', { className: 'side-head' },
+      brand(),
+      h('button', { className: 'icon-btn drawer-close', 'aria-label': 'Menu sluiten', onclick: closeDrawer }, icon('x'))),
+    h('button', {
+      id: 'collapse', className: 'nav-link collapse-btn', title: 'Menu inklappen',
+      onclick: () => {
+        const c = document.documentElement.classList.toggle('collapsed');
+        store.set('sidebar', c ? 'in' : 'uit');
+      },
+    }, icon('sidebar'), h('span', { className: 'nav-label' }, 'Menu inklappen')),
+    h('nav', { className: 'nav-group' }, h('div', { className: 'overline' }, 'Wallet'), ...NAV.slice(0, 4).map(navLink)),
+    h('nav', { className: 'nav-group' }, h('div', { className: 'overline' }, 'Beheer'), navLink(NAV[4])),
+    h('div', { className: 'side-foot' },
+      meta.net === 'test' && h('span', { className: 'badge warn' }, 'testnet'),
+      h('button', { className: 'nav-link', onclick: lock }, icon('lock'), h('span', { className: 'nav-label' }, 'Vergrendelen'))));
   screen(
-    h('header', { className: 'top' },
-      h('strong', {}, 'Wallet', meta.net === 'test' && h('span', { className: 'badge' }, 'testnet')),
-      h('button', { className: 'link', onclick: lock }, 'Vergrendelen')),
-    h('nav', { className: 'tabs' }, ...tabs.map(([k, l]) => h('button', { className: tab === k ? 'on' : '', 'aria-current': tab === k ? 'page' : null, onclick: () => { tab = k; render(); } }, l))),
-    h('main', {}, body));
+    h('div', { className: 'shell' },
+      side,
+      h('div', { className: 'scrim', onclick: closeDrawer }),
+      h('div', { className: 'content' },
+        h('header', { className: 'topbar' },
+          brand(),
+          h('div', { className: 'topbar-actions' },
+            h('button', { className: 'icon-btn', 'aria-label': 'Vergrendelen', onclick: lock }, icon('lock')),
+            h('button', { className: 'icon-btn', 'aria-label': 'Menu openen', onclick: () => document.body.classList.add('lade-open') }, icon('menu')))),
+        h('main', { id: 'main' }, h('h1', { className: 'page-title' }, TITLES[tab]), body))),
+    h('nav', { className: 'bottombar', 'aria-label': 'Snelmenu' },
+      ...NAV.map((n) => h('button', { className: 'bottom-link', 'aria-current': tab === n.key ? 'page' : null, onclick: () => go(n.key) },
+        icon(n.icon), h('span', {}, n.label)))));
 }
 
 function balance() {
   const c = snap?.confirmed ?? 0, p = snap?.pending ?? 0;
   return h('section', { className: 'balance' },
+    h('div', { className: 'overline' }, 'Saldo'),
     h('div', { className: 'amount' }, snap ? formatBtc(c + p) : '–', h('span', {}, ' BTC')),
     h('div', { className: 'muted' }, snap ? `${formatSats(c + p)} sats` : 'Nog niet bijgewerkt',
       p !== 0 && ` · ${formatBtc(p)} onbevestigd`),
-    h('button', { id: 'sync', className: 'link', disabled: syncing, onclick: refresh }, syncing ? 'Bijwerken…' : 'Bijwerken'));
+    h('button', { id: 'sync', className: 'btn-secondary sm', disabled: syncing, onclick: refresh }, icon('refresh', 'sm'), syncing ? 'Bijwerken…' : 'Bijwerken'));
 }
 
 function homeView() {
@@ -365,7 +425,6 @@ function receiveView() {
   });
   const used = snap?.addresses.find((x) => x.chain === 0 && x.index === idx)?.used;
   return h('div', { className: 'stack' },
-    h('h2', {}, 'Ontvangen'),
     h('p', { className: 'muted' }, `Adres #${idx + 1} · ${a.path(0, idx)}`, used && ' · al gebruikt'),
     code, uriText,
     h('div', { className: 'row' },
@@ -418,7 +477,6 @@ function sendView() {
   });
 
   return h('div', {},
-    h('h2', {}, 'Versturen'),
     !snap && h('p', { className: 'muted' }, 'Saldo is nog niet bijgewerkt.'),
     snap && h('p', { className: 'muted' }, `Beschikbaar: ${formatBtc(available)} BTC`),
     h('form', {
@@ -506,7 +564,6 @@ function addressesView() {
   for (const c of snap?.coins ?? []) { const k = a.address(c.chain, c.index); balances.set(k, (balances.get(k) ?? 0) + c.value); }
   const shown = list.filter((x) => x.used || (x.chain === 0 && x.index <= receiveIndex()));
   return h('div', {},
-    h('h2', {}, 'Adressen'),
     h('p', { className: 'muted' }, 'Alle adressen komen uit je herstelzin (BIP84, Native SegWit). Wisseladressen ontvangen het wisselgeld van je eigen betalingen.'),
     h('ul', { className: 'list' }, ...shown.map((x) =>
       h('li', {},
@@ -547,7 +604,6 @@ function settingsView() {
   const lockSel = h('select', {}, ...[1, 5, 15, 30].map((m) => h('option', { value: String(m), selected: meta.lockMinutes === m }, `${m} min`)));
   lockSel.addEventListener('change', () => { setMeta({ lockMinutes: Number(lockSel.value) }); touch(); toast('Opgeslagen'); });
   return h('div', { className: 'stack' },
-    h('h2', {}, 'Instellingen'),
 
     h('section', { className: 'card stack' },
       h('h3', {}, 'Herstelzin'),
