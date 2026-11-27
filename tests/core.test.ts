@@ -71,3 +71,22 @@ test('transactie bouwen en ondertekenen', () => {
   assert.equal(all.amount + all.fee, 100000n);
   assert.throws(() => buildTx(acc, coins, to, 99999n, 5, 0));
 });
+
+test('Esplora valt terug op reserve-server', async () => {
+  const { Esplora, serversFor } = await import('../src/core/esplora.ts');
+  assert.deepEqual(serversFor('main', 'https://mempool.space/api/'), ['https://mempool.space/api', 'https://blockstream.info/api']);
+  assert.deepEqual(serversFor('main', 'https://eigen.node/api'), ['https://eigen.node/api']);
+  const orig = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = (async (url: string) => {
+    calls.push(url);
+    if (url.startsWith('https://a')) throw new TypeError('Failed to fetch');
+    return new Response('123');
+  }) as typeof fetch;
+  try {
+    const api = new Esplora(['https://a/api', 'https://b/api']);
+    assert.equal(await api.tipHeight(), 123);
+    assert.equal(api.base, 'https://b/api');
+    assert.equal(calls.length, 3);
+  } finally { globalThis.fetch = orig; }
+});
