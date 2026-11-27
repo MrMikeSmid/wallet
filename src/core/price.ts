@@ -32,3 +32,15 @@ const eur0 = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR'
 export const formatEur = (v: number, whole = false) => (whole ? eur0 : eur).format(v);
 /** Waarde in euro van een aantal sats. */
 export const satsToEur = (sats: number, price: number) => (sats / 1e8) * price;
+
+/** Koers op een moment in het verleden (uurcandle). null als Bitvavo die tijd niet kent (vóór 2019). */
+export async function fetchPriceAt(unixSec: number): Promise<number | null> {
+  const t = unixSec * 1000;
+  const r = await fetch(`${API}/BTC-EUR/candles?interval=1h&end=${t + 3600_000}&limit=1`, opts);
+  if (!r.ok) throw new Error(`Bitvavo gaf ${r.status}`);
+  const rows = (await r.json()) as [number, string, string, string, string, string][];
+  const c = rows[0];
+  if (!c || Math.abs(c[0] - t) > 2 * 3600_000) return null;
+  const p = Number(c[4]);
+  return p > 0 ? p : null;
+}

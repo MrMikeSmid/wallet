@@ -4,7 +4,7 @@ import { isAddress, makeUri, parseUri } from './core/bip21.ts';
 import { DEFAULT_SERVER, Esplora, serversFor } from './core/esplora.ts';
 import { icon } from './icons.ts';
 import { clearSession, extendSession, loadSession, saveSession } from './core/session.ts';
-import { fetchHistory, fetchPrice, formatEur, satsToEur, type Point, type Range } from './core/price.ts';
+import { fetchHistory, fetchPrice, fetchPriceAt, formatEur, satsToEur, type Point, type Range } from './core/price.ts';
 import { startScan } from './core/scanner.ts';
 import { buildTx, type Draft } from './core/send.ts';
 import { defaultMeta, loadMeta, loadVault, lockoutMs, saveMeta, saveVault, wipe, type Meta } from './core/store.ts';
@@ -527,7 +527,30 @@ function chart(pts: Point[]) {
     table);
 }
 
+// ---------- koers op het moment van de transactie ----------
+const priceAtTx = new Map<string, number | null>();
+let loadingTxPrices = false;
+const txDate = (sec: number) => new Date(sec * 1000).toLocaleString('nl-NL', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+function txThen(txid: string, sats: number): string {
+  if (!priceAtTx.has(txid)) return 'Koers toen laden…';
+  const p = priceAtTx.get(txid);
+  return p ? `Koers toen ${formatEur(p, true)} · waarde toen ${formatEur(satsToEur(sats, p))}` : 'Koers toen onbekend';
+}
+async function loadTxPrices() {
+  if (loadingTxPrices || meta.net !== 'main' || !snap) return;
+  loadingTxPrices = true;
+  try {
+    for (const t of snap.history) {
+      if (priceAtTx.has(t.txid) || !t.time) continue; // onbevestigd: nog geen moment bekend
+      try { priceAtTx.set(t.txid, await fetchPriceAt(t.time)); } catch { continue; }
+      const el = document.querySelector<HTMLElement>(`[data-tx="${t.txid}"]`);
+      if (el) el.textContent = txThen(t.txid, Math.abs(t.delta));
+    }
+  } finally { loadingTxPrices = false; }
+}
+
 function homeView() {
+  queueMicrotask(loadTxPrices);
   const items = snap?.history ?? [];
   return h('div', {},
     balance(),
@@ -536,13 +559,18 @@ function homeView() {
       h('button', { className: 'primary', onclick: () => go('receive') }, 'Ontvangen'),
       h('button', { className: 'primary', onclick: () => go('send') }, 'Versturen')),
     h('h2', {}, 'Transacties'),
-    items.length ? h('ul', { className: 'list' }, ...items.map((t) =>
-      h('li', {},
+    items.length ? h('ul', { className: 'list' }, ...items.map((t) => {
+      const abs = Math.abs(t.delta);
+      const main = meta.net === 'main';
+      return h('li', {},
         h('a', { href: explorer(meta.net, t.txid), target: '_blank', rel: 'noopener noreferrer' },
           h('span', { className: 'tx-top' },
             h('span', { className: t.delta >= 0 ? 'in' : 'out' }, (t.delta >= 0 ? '+' : '') + formatBtc(t.delta) + ' BTC'),
-            meta.net === 'main' && h('span', { className: 'muted small', 'data-sats': String(Math.abs(t.delta)) }, price ? formatEur(satsToEur(Math.abs(t.delta), price)) : '')),
-          h('small', {}, t.confirmed ? (t.time ? new Date(t.time * 1000).toLocaleString('nl-NL') : `blok ${t.height}`) : 'Onbevestigd', ' · ', short(t.txid))))))
+            main && h('span', { className: 'muted small', 'data-sats': String(abs), title: 'Waarde nu' }, price ? formatEur(satsToEur(abs, price)) : '')),
+          h('span', { className: 'tx-date' }, t.confirmed && t.time ? txDate(t.time) : t.confirmed ? `Blok ${t.height}` : 'Onbevestigd'),
+          main && !!t.time && h('span', { className: 'tx-then', 'data-tx': t.txid }, txThen(t.txid, abs)),
+          h('small', {}, short(t.txid))));
+    }))
       : h('p', { className: 'muted' }, snap ? 'Nog geen transacties.' : 'Druk op Bijwerken om saldo en transacties op te halen.'));
 }
 
