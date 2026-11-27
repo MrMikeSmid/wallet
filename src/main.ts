@@ -57,7 +57,8 @@ function busy(btn: HTMLButtonElement, on: boolean, text?: string) {
   if (text) btn.textContent = text;
 }
 const short = (s: string) => s.slice(0, 10) + '…' + s.slice(-8);
-const explorer = (net: Net, txid: string) => `https://mempool.space/${net === 'test' ? 'testnet4/' : ''}tx/${txid}`;
+// Mainnet via blockchain.com; testnet4 kent blockchain.com niet, daarvoor blijft mempool.space.
+const explorer = (net: Net, txid: string) => net === 'main' ? `https://www.blockchain.com/explorer/transactions/btc/${txid}` : `https://mempool.space/testnet4/tx/${txid}`;
 
 // ---------- toestand ----------
 let meta: Meta = loadMeta();
