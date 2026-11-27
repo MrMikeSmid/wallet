@@ -3,6 +3,7 @@ import encodeQR from '@paulmillr/qr';
 import { isAddress, makeUri, parseUri } from './core/bip21.ts';
 import { DEFAULT_SERVER, Esplora, serversFor } from './core/esplora.ts';
 import { icon } from './icons.ts';
+import { clearSession, extendSession, loadSession, saveSession } from './core/session.ts';
 import { fetchHistory, fetchPrice, formatEur, satsToEur, type Point, type Range } from './core/price.ts';
 import { startScan } from './core/scanner.ts';
 import { buildTx, type Draft } from './core/send.ts';
@@ -80,6 +81,7 @@ function setMeta(p: Partial<Meta>) { meta = { ...meta, ...p }; saveMeta(meta); }
 
 function lock() {
   secret = null; acc = null; snap = null;
+  clearSession();
   clearTimeout(lockTimer);
   clearInterval(priceTimer);
   start();
@@ -88,6 +90,7 @@ function touch() {
   if (!acc) return;
   clearTimeout(lockTimer);
   lockTimer = window.setTimeout(lock, meta.lockMinutes * 60_000);
+  extendSession(meta.lockMinutes);
 }
 ['pointerdown', 'keydown'].forEach((e) => addEventListener(e, touch, { passive: true }));
 
@@ -117,9 +120,11 @@ async function askPassword(title: string): Promise<Secret | null> {
 }
 
 // ---------- start ----------
-function start() {
+async function start() {
   meta = loadMeta();
-  if (loadVault()) unlockScreen(); else welcome();
+  if (!loadVault()) { welcome(); return; }
+  const s = await loadSession();
+  if (s) enter(s, true); else unlockScreen();
 }
 
 function welcome() {
@@ -285,15 +290,17 @@ function unlockScreen() {
 
 function forgot() {
   if (confirm('Zonder wachtwoord kun je deze kluis niet openen. Je kunt de wallet van dit apparaat wissen en herstellen met je herstelzin. Heb je je herstelzin niet, dan ben je je bitcoin kwijt.\n\nWallet nu van dit apparaat wissen?')) {
-    wipe(); start();
+    wipe(); clearSession(); start();
   }
 }
 
 // ---------- hoofdscherm ----------
-function enter(s: Secret) {
+function enter(s: Secret, resumed = false) {
   secret = s;
   acc = new Account(s.mnemonic, s.passphrase, meta.net);
-  tab = 'home';
+  if (!resumed) saveSession(s, meta.lockMinutes);
+  const saved = store.get('wallet.tab');
+  tab = resumed && saved && NAV.some((n) => n.key === saved) ? saved as Tab : 'home';
   touch();
   render();
   refresh();
@@ -335,7 +342,7 @@ const NAV: { key: Tab; label: string; icon: string }[] = [
 ];
 const TITLES: Record<Tab, string> = { home: 'Overzicht', receive: 'Ontvangen', send: 'Versturen', addresses: 'Adressen', settings: 'Instellingen' };
 
-function go(k: Tab) { tab = k; closeDrawer(); render(); }
+function go(k: Tab) { tab = k; store.set('wallet.tab', k); closeDrawer(); render(); }
 function setDrawer(open: boolean) {
   document.body.classList.toggle('lade-open', open);
   document.getElementById('menu-btn')?.setAttribute('aria-expanded', String(open));
@@ -731,7 +738,7 @@ async function showKey(chain: 0 | 1, index: number) {
 function settingsView() {
   const a = acc!;
   const server = h('input', { type: 'url', value: meta.server, autocomplete: 'off', spellcheck: false });
-  const lockSel = h('select', {}, ...[1, 5, 15, 30].map((m) => h('option', { value: String(m), selected: meta.lockMinutes === m }, `${m} min`)));
+  const lockSel = h('select', {}, ...[1, 5, 15, 30, 60, 240, 1440].map((m) => h('option', { value: String(m), selected: meta.lockMinutes === m }, m < 60 ? `${m} min` : m === 1440 ? '1 dag' : `${m / 60} uur`)));
   lockSel.addEventListener('change', () => { setMeta({ lockMinutes: Number(lockSel.value) }); touch(); toast('Opgeslagen'); });
   return h('div', { className: 'stack' },
 
@@ -819,6 +826,7 @@ async function wipeWallet() {
   const word = prompt('Typ WISSEN om de wallet van dit apparaat te verwijderen. Zonder herstelzin ben je je bitcoin kwijt.');
   if (word?.trim().toUpperCase() !== 'WISSEN') return;
   wipe();
+  clearSession();
   secret = null; acc = null; snap = null;
   start();
 }
