@@ -3,6 +3,7 @@ import encodeQR from '@paulmillr/qr';
 import { isAddress, makeUri, parseUri } from './core/bip21.ts';
 import { DEFAULT_SERVER, Esplora, serversFor } from './core/esplora.ts';
 import { icon } from './icons.ts';
+import { fetchHistory, fetchPrice, formatEur, satsToEur, type Point, type Range } from './core/price.ts';
 import { startScan } from './core/scanner.ts';
 import { buildTx, type Draft } from './core/send.ts';
 import { defaultMeta, loadMeta, loadVault, lockoutMs, saveMeta, saveVault, wipe, type Meta } from './core/store.ts';
@@ -56,7 +57,8 @@ function busy(btn: HTMLButtonElement, on: boolean, text?: string) {
   if (text) btn.textContent = text;
 }
 const short = (s: string) => s.slice(0, 10) + '…' + s.slice(-8);
-const explorer = (net: Net, txid: string) => `https://mempool.space/${net === 'test' ? 'testnet4/' : ''}tx/${txid}`;
+// Mainnet via blockchain.com; testnet4 kent blockchain.com niet, daarvoor blijft mempool.space.
+const explorer = (net: Net, txid: string) => net === 'main' ? `https://www.blockchain.com/explorer/transactions/btc/${txid}` : `https://mempool.space/testnet4/tx/${txid}`;
 
 // ---------- toestand ----------
 let meta: Meta = loadMeta();
@@ -79,6 +81,7 @@ function setMeta(p: Partial<Meta>) { meta = { ...meta, ...p }; saveMeta(meta); }
 function lock() {
   secret = null; acc = null; snap = null;
   clearTimeout(lockTimer);
+  clearInterval(priceTimer);
   start();
 }
 function touch() {
@@ -294,6 +297,7 @@ function enter(s: Secret) {
   touch();
   render();
   refresh();
+  startMarket();
 }
 
 let syncing = false;
@@ -389,28 +393,148 @@ function render() {
         icon(n.icon), h('span', {}, n.label)))));
 }
 
+// ---------- koers (Bitvavo) ----------
+let price: number | null = null;
+let history: Point[] = [];
+let range: Range = ([6, 12, 24] as const).find((r) => String(r) === store.get('koers')) ?? 24;
+let priceTimer = 0;
+let marketError = '';
+
+async function loadMarket(withHistory = true) {
+  try {
+    const [p, hist] = await Promise.all([fetchPrice(), withHistory ? fetchHistory(range) : Promise.resolve(history)]);
+    price = p;
+    history = hist;
+    marketError = '';
+  } catch (e) {
+    marketError = 'Koers niet beschikbaar: ' + (e as Error).message;
+  }
+  updateMarket();
+}
+function startMarket() {
+  clearInterval(priceTimer);
+  loadMarket();
+  // Elke minuut de koers, elke 5 minuten ook de grafiek.
+  let n = 0;
+  priceTimer = window.setInterval(() => { if (acc && tab === 'home') loadMarket(++n % 5 === 0); }, 60_000);
+}
+function updateMarket() {
+  document.getElementById('market')?.replaceWith(marketCard());
+  document.getElementById('balance-eur')?.replaceWith(balanceEur());
+  if (price) document.querySelectorAll<HTMLElement>('[data-sats]').forEach((el) => { el.textContent = formatEur(satsToEur(Number(el.dataset.sats), price!)); });
+}
+
+function balanceEur() {
+  const total = (snap?.confirmed ?? 0) + (snap?.pending ?? 0);
+  const text = meta.net !== 'main' ? 'Testnet-munten hebben geen waarde'
+    : !snap ? '' : price ? '≈ ' + formatEur(satsToEur(total, price)) : 'Eurowaarde laden…';
+  return h('div', { id: 'balance-eur', className: 'eur' }, text);
+}
+
 function balance() {
   const c = snap?.confirmed ?? 0, p = snap?.pending ?? 0;
   return h('section', { className: 'balance' },
     h('div', { className: 'overline' }, 'Saldo'),
     h('div', { className: 'amount' }, snap ? formatBtc(c + p) : '–', h('span', {}, ' BTC')),
-    h('div', { className: 'muted' }, snap ? `${formatSats(c + p)} sats` : 'Nog niet bijgewerkt',
+    balanceEur(),
+    h('div', { className: 'muted small' }, snap ? `${formatSats(c + p)} sats` : 'Nog niet bijgewerkt',
       p !== 0 && ` · ${formatBtc(p)} onbevestigd`),
     h('button', { id: 'sync', className: 'btn-secondary sm', disabled: syncing, onclick: refresh }, icon('refresh', 'sm'), syncing ? 'Bijwerken…' : 'Bijwerken'));
+}
+
+function marketCard() {
+  const first = history[0]?.p;
+  const now = price ?? history.at(-1)?.p;
+  const diff = first && now ? now - first : null;
+  const pct = diff != null && first ? (diff / first) * 100 : null;
+  const up = (diff ?? 0) >= 0;
+  const seg = h('div', { className: 'segment', role: 'group', 'aria-label': 'Periode' },
+    ...([6, 12, 24] as const).map((r) => h('button', {
+      type: 'button', className: 'seg', 'aria-pressed': String(range === r),
+      onclick: () => { range = r; store.set('koers', String(r)); updateMarket(); loadMarket(); },
+    }, `${r} uur`)));
+  return h('section', { id: 'market', className: 'card market' },
+    h('div', { className: 'market-head' },
+      h('div', {},
+        h('div', { className: 'overline' }, 'Koers bitcoin'),
+        h('div', { className: 'price' }, now ? formatEur(now) : '–'),
+        pct != null && h('div', { className: 'change ' + (up ? 'up' : 'down') },
+          h('span', { 'aria-hidden': 'true' }, up ? '▲ ' : '▼ '),
+          `${up ? '+' : '−'}${formatEur(Math.abs(diff!))} (${up ? '+' : '−'}${Math.abs(pct).toLocaleString('nl-NL', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}%)`,
+          h('span', { className: 'muted' }, ` in ${range} uur`))),
+      seg),
+    marketError ? h('p', { className: 'error' }, marketError)
+      : history.length > 1 ? chart(history) : h('div', { className: 'chart-empty muted' }, 'Grafiek laden…'),
+    h('p', { className: 'small' }, 'Bron: Bitvavo (BTC-EUR)'));
+}
+
+function chart(pts: Point[]) {
+  const W = 600, H = 200;
+  const ps = pts.map((x) => x.p);
+  const lo = Math.min(...ps), hi = Math.max(...ps);
+  const pad = (hi - lo) * 0.08 || hi * 0.001;
+  const y0 = lo - pad, y1 = hi + pad;
+  const t0 = pts[0].t, t1 = pts.at(-1)!.t;
+  const x = (t: number) => ((t - t0) / (t1 - t0 || 1)) * W;
+  const y = (p: number) => H - ((p - y0) / (y1 - y0)) * H;
+  const d = pts.map((q, i) => `${i ? 'L' : 'M'}${x(q.t).toFixed(1)},${y(q.p).toFixed(1)}`).join('');
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('aria-hidden', 'true');
+  const mk = (tag: string, a: Record<string, string>) => { const e = document.createElementNS(ns, tag); for (const k in a) e.setAttribute(k, a[k]); svg.append(e); return e; };
+  for (const f of [0.25, 0.5, 0.75]) mk('line', { x1: '0', x2: String(W), y1: String(H * f), y2: String(H * f), class: 'grid' });
+  mk('path', { d: d + `L${W},${H}L0,${H}Z`, class: 'area' });
+  mk('path', { d, class: 'line' });
+  const cross = mk('line', { x1: '0', x2: '0', y1: '0', y2: String(H), class: 'cross', visibility: 'hidden' });
+  const dot = h('div', { className: 'dot', hidden: true });
+  const tip = h('div', { className: 'tip', hidden: true });
+  const time = (t: number) => new Date(t).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
+  const plot = h('div', { className: 'plot' }, svg, dot, tip,
+    h('span', { className: 'axis-y hi' }, formatEur(hi, true)),
+    h('span', { className: 'axis-y lo' }, formatEur(lo, true)));
+  const show = (clientX: number) => {
+    const r = plot.getBoundingClientRect();
+    const fx = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+    const tt = t0 + fx * (t1 - t0);
+    let best = pts[0];
+    for (const q of pts) if (Math.abs(q.t - tt) < Math.abs(best.t - tt)) best = q;
+    const px = x(best.t) / W * 100, py = y(best.p) / H * 100;
+    cross.setAttribute('x1', String(x(best.t))); cross.setAttribute('x2', String(x(best.t))); cross.setAttribute('visibility', 'visible');
+    dot.hidden = false; dot.style.left = px + '%'; dot.style.top = py + '%';
+    tip.hidden = false; tip.textContent = `${time(best.t)} · ${formatEur(best.p)}`;
+    tip.style.left = Math.min(Math.max(px, 18), 82) + '%';
+  };
+  const hide = () => { cross.setAttribute('visibility', 'hidden'); dot.hidden = true; tip.hidden = true; };
+  plot.addEventListener('pointermove', (e) => show(e.clientX));
+  plot.addEventListener('pointerdown', (e) => show(e.clientX));
+  plot.addEventListener('pointerleave', hide);
+  const table = h('details', { className: 'table-view' }, h('summary', {}, 'Toon als tabel'),
+    h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Tijd'), h('th', {}, 'Koers'))),
+      h('tbody', {}, ...pts.filter((_, i) => i % Math.ceil(pts.length / 12) === 0 || i === pts.length - 1)
+        .map((q) => h('tr', {}, h('td', {}, time(q.t)), h('td', {}, formatEur(q.p)))))));
+  return h('div', { className: 'chart', role: 'img', 'aria-label': `Koers van ${formatEur(pts[0].p)} naar ${formatEur(pts.at(-1)!.p)} in ${range} uur` },
+    plot,
+    h('div', { className: 'axis-x' }, h('span', {}, time(t0)), h('span', {}, time(t0 + (t1 - t0) / 2)), h('span', {}, 'nu')),
+    table);
 }
 
 function homeView() {
   const items = snap?.history ?? [];
   return h('div', {},
     balance(),
+    marketCard(),
     h('div', { className: 'row' },
-      h('button', { className: 'primary', onclick: () => { tab = 'receive'; render(); } }, 'Ontvangen'),
-      h('button', { className: 'primary', onclick: () => { tab = 'send'; render(); } }, 'Versturen')),
+      h('button', { className: 'primary', onclick: () => go('receive') }, 'Ontvangen'),
+      h('button', { className: 'primary', onclick: () => go('send') }, 'Versturen')),
     h('h2', {}, 'Transacties'),
     items.length ? h('ul', { className: 'list' }, ...items.map((t) =>
       h('li', {},
         h('a', { href: explorer(meta.net, t.txid), target: '_blank', rel: 'noopener noreferrer' },
-          h('span', { className: t.delta >= 0 ? 'in' : 'out' }, (t.delta >= 0 ? '+' : '') + formatBtc(t.delta) + ' BTC'),
+          h('span', { className: 'tx-top' },
+            h('span', { className: t.delta >= 0 ? 'in' : 'out' }, (t.delta >= 0 ? '+' : '') + formatBtc(t.delta) + ' BTC'),
+            meta.net === 'main' && h('span', { className: 'muted small', 'data-sats': String(Math.abs(t.delta)) }, price ? formatEur(satsToEur(Math.abs(t.delta), price)) : '')),
           h('small', {}, t.confirmed ? (t.time ? new Date(t.time * 1000).toLocaleString('nl-NL') : `blok ${t.height}`) : 'Onbevestigd', ' · ', short(t.txid))))))
       : h('p', { className: 'muted' }, snap ? 'Nog geen transacties.' : 'Druk op Bijwerken om saldo en transacties op te halen.'));
 }

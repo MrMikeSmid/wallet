@@ -90,3 +90,9 @@ test('Esplora valt terug op reserve-server', async () => {
     assert.equal(calls.length, 3);
   } finally { globalThis.fetch = orig; }
 });
+
+test('euro-omrekening', async () => {
+  const { satsToEur, formatEur } = await import('../src/core/price.ts');
+  assert.equal(satsToEur(150000, 56000), 84);
+  assert.match(formatEur(84).replace(/\s/g, ' '), /€ 84,00/);
+});

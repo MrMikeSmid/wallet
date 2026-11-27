@@ -222,3 +222,36 @@ dialog h2 { margin-top: 0; }
 
 .toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 40; background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: var(--radius); max-width: calc(100vw - 32px); box-shadow: var(--shadow); }
 .toast.bad { background: var(--danger); color: var(--on-solid); }
+
+/* ---------- saldo in euro en koers ---------- */
+.eur { font-size: 1rem; color: var(--text-muted); font-variant-numeric: tabular-nums; min-height: 1.5em; }
+.market { margin-bottom: 16px; display: flex; flex-direction: column; gap: 12px; }
+.market-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.price { font-family: var(--font-display); font-size: 1.7rem; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.change { font-size: .9rem; font-variant-numeric: tabular-nums; font-weight: 600; }
+.change.up { color: var(--success); }
+.change.down { color: var(--danger); }
+.change .muted { font-weight: 400; }
+.segment { display: inline-flex; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 3px; gap: 2px; }
+.seg { min-height: 34px; padding: 4px 12px; border: 0; border-radius: 6px; background: none; color: var(--text-muted); font-size: .88rem; }
+.seg:hover { background: var(--bg-alt); color: var(--text); }
+.seg[aria-pressed="true"] { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow-sm); }
+.chart { display: flex; flex-direction: column; gap: 6px; }
+.plot { position: relative; height: 180px; touch-action: pan-y; cursor: crosshair; }
+.plot svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.plot .grid { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.plot .line { fill: none; stroke: var(--accent-strong); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.plot .area { fill: var(--accent-soft); opacity: .55; stroke: none; }
+.plot .cross { stroke: var(--text-faint); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.plot .dot { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: var(--accent-strong); box-shadow: 0 0 0 2px var(--surface); pointer-events: none; }
+.plot .tip { position: absolute; top: 4px; transform: translateX(-50%); z-index: 1; background: var(--text); color: var(--bg); font-size: .8rem; padding: 4px 8px; border-radius: 6px; white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums; }
+.axis-y { position: absolute; right: 0; font-size: .72rem; color: var(--text-faint); background: color-mix(in srgb, var(--surface) 80%, transparent); padding: 0 4px; border-radius: 4px; pointer-events: none; font-variant-numeric: tabular-nums; }
+.axis-y.hi { top: 0; }
+.axis-y.lo { bottom: 0; }
+.axis-x { display: flex; justify-content: space-between; font-size: .72rem; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.chart-empty { height: 180px; display: grid; place-items: center; }
+.table-view { padding: 6px 12px; box-shadow: none; }
+.table-view table { width: 100%; border-collapse: collapse; font-size: .85rem; font-variant-numeric: tabular-nums; }
+.table-view th, .table-view td { text-align: left; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.table-view th { color: var(--text-muted); font-weight: 600; }
+.tx-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
