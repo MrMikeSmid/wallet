@@ -255,3 +255,5 @@ dialog h2 { margin-top: 0; }
 .table-view th, .table-view td { text-align: left; padding: 4px 0; border-bottom: 1px solid var(--border); }
 .table-view th { color: var(--text-muted); font-weight: 600; }
 .tx-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.tx-date { font-size: .88rem; color: var(--text-muted); }
+.tx-then { font-size: .85rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
