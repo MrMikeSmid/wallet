@@ -96,3 +96,20 @@ test('euro-omrekening', async () => {
   assert.equal(satsToEur(150000, 56000), 84);
   assert.match(formatEur(84).replace(/\s/g, ' '), /€ 84,00/);
 });
+
+test('winst/verlies met gemiddelde inleg', async () => {
+  const { computePnl } = await import('../src/core/pnl.ts');
+  const prices: Record<string, number | null> = { a: 50000, b: 70000 };
+  const txs = [
+    { txid: 'a', delta: 100000, time: 1, confirmed: true },   // 0,001 BTC à 50k = €50
+    { txid: 'b', delta: 100000, time: 2, confirmed: true },   // 0,001 BTC à 70k = €70
+    { txid: 'c', delta: -100000, time: 3, confirmed: true },  // helft weg → inleg €60
+  ];
+  const r = computePnl(txs, (id) => prices[id], 80000, 100000);
+  assert.equal(Math.round(r.cost), 60);
+  assert.equal(Math.round(r.value), 80);
+  assert.equal(Math.round(r.diff), 20);
+  assert.ok(r.complete && !r.loading);
+  const u = computePnl([{ txid: 'x', delta: 1000, time: 1, confirmed: true }], () => null, 1, 1000);
+  assert.equal(u.complete, false);
+});
