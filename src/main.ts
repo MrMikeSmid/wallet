@@ -4,6 +4,7 @@ import { isAddress, makeUri, parseUri } from './core/bip21.ts';
 import { DEFAULT_SERVER, Esplora, serversFor } from './core/esplora.ts';
 import { icon } from './icons.ts';
 import { clearSession, extendSession, loadSession, saveSession } from './core/session.ts';
+import { computePnl } from './core/pnl.ts';
 import { fetchHistory, fetchPrice, fetchPriceAt, formatEur, satsToEur, type Point, type Range } from './core/price.ts';
 import { startScan } from './core/scanner.ts';
 import { buildTx, type Draft } from './core/send.ts';
@@ -427,26 +428,42 @@ function startMarket() {
 }
 function updateMarket() {
   document.getElementById('market')?.replaceWith(marketCard());
-  document.getElementById('balance-eur')?.replaceWith(balanceEur());
+  updateBalance();
   if (price) document.querySelectorAll<HTMLElement>('[data-sats]').forEach((el) => { el.textContent = formatEur(satsToEur(Number(el.dataset.sats), price!)); });
 }
 
-function balanceEur() {
-  const total = (snap?.confirmed ?? 0) + (snap?.pending ?? 0);
-  const text = meta.net !== 'main' ? 'Testnet-munten hebben geen waarde'
-    : !snap ? '' : price ? '≈ ' + formatEur(satsToEur(total, price)) : 'Eurowaarde laden…';
-  return h('div', { id: 'balance-eur', className: 'eur' }, text);
+function pnlRow() {
+  if (meta.net !== 'main' || !snap || !price || !snap.history.some((t) => t.delta > 0)) return null;
+  const total = snap.confirmed + snap.pending;
+  const r = computePnl(snap.history, (id) => priceAtTx.get(id), price, total);
+  if (r.loading && r.cost === 0) return h('div', { className: 'pnl muted small' }, 'Winst/verlies berekenen…');
+  const up = r.diff >= 0;
+  const pct = Math.abs(r.pct).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return h('div', { className: 'pnl' },
+    h('div', { className: 'pnl-item' }, h('span', { className: 'overline' }, 'Inleg'), h('strong', {}, formatEur(r.cost))),
+    h('div', { className: 'pnl-item' }, h('span', { className: 'overline' }, up ? 'Winst' : 'Verlies'),
+      h('strong', { className: 'change ' + (up ? 'up' : 'down') },
+        h('span', { 'aria-hidden': 'true' }, up ? '▲ ' : '▼ '),
+        `${up ? '+' : '−'}${formatEur(Math.abs(r.diff))} (${up ? '+' : '−'}${pct}%)`)),
+    (!r.complete || r.loading) && h('small', { className: 'pnl-note' },
+      r.loading ? 'Nog niet alle aankoopkoersen geladen.' : 'Niet volledig: van sommige ontvangsten is de koers onbekend (vóór 2019).'));
 }
 
 function balance() {
-  const c = snap?.confirmed ?? 0, p = snap?.pending ?? 0;
-  return h('section', { className: 'balance' },
+  const c = snap?.confirmed ?? 0, p = snap?.pending ?? 0, total = c + p;
+  const main = meta.net === 'main';
+  const big = !snap ? '–' : main ? (price ? formatEur(satsToEur(total, price)) : 'Laden…') : formatBtc(total);
+  return h('section', { id: 'balance', className: 'balance' },
     h('div', { className: 'overline' }, 'Saldo'),
-    h('div', { className: 'amount' }, snap ? formatBtc(c + p) : '–', h('span', {}, ' BTC')),
-    balanceEur(),
-    h('div', { className: 'muted small' }, snap ? `${formatSats(c + p)} sats` : 'Nog niet bijgewerkt',
+    h('div', { className: 'amount' }, big, !main && snap && h('span', {}, ' BTC')),
+    h('div', { className: 'eur' }, !snap ? 'Nog niet bijgewerkt'
+      : main ? `${formatBtc(total)} BTC · ${formatSats(total)} sats` : 'Testnet-munten hebben geen waarde',
       p !== 0 && ` · ${formatBtc(p)} onbevestigd`),
+    pnlRow(),
     h('button', { id: 'sync', className: 'btn-secondary sm', disabled: syncing, onclick: refresh }, icon('refresh', 'sm'), syncing ? 'Bijwerken…' : 'Bijwerken'));
+}
+function updateBalance() {
+  if (!syncing) document.getElementById('balance')?.replaceWith(balance());
 }
 
 function marketCard() {
@@ -546,7 +563,7 @@ async function loadTxPrices() {
       const el = document.querySelector<HTMLElement>(`[data-tx="${t.txid}"]`);
       if (el) el.textContent = txThen(t.txid, Math.abs(t.delta));
     }
-  } finally { loadingTxPrices = false; }
+  } finally { loadingTxPrices = false; updateBalance(); }
 }
 
 function homeView() {
@@ -861,3 +878,7 @@ async function wipeWallet() {
 
 void secret;
 start();
+
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(() => { /* zonder service worker werkt de app gewoon online */ }); });
+}
